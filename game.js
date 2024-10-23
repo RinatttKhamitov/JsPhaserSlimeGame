@@ -1,12 +1,15 @@
+import Sword from './sword.js'; // Импортируем класс меча
+import Enemy from './enemy.js'; // Импортируем класс врага
+
 const config = {
     type: Phaser.AUTO,
-    width: 1200, //  
-    height: 900,  
+    width: 1200,
+    height: 900,
     physics: {
         default: 'arcade',
         arcade: {
             gravity: { y: 0 },
-            debug: true
+            debug: false
         }
     },
     scene: {
@@ -20,96 +23,107 @@ const game = new Phaser.Game(config);
 
 let player;
 let hand;
+let sword;
+let enemy;
 let floor;
-let mousePosClick = null; // Место, где был зафиксирован клик
-let isDragging = false; // Флаг, показывающий, зажата ли ЛКМ
-const maxHandDistance = 150; // Максимальное расстояние для руки
-
-// Переменные для отслеживания скорости мыши
-let prevMousePos = { x: 0, y: 0 }; // Предыдущее положение мыши
-let mouseVelocity = { x: 0, y: 0 }; // Скорость мыши
+let particles;
+let isDragging = false;
+const maxHandDistance = 150;
 
 function preload() {
-    // Загружаем изображения для игрока, руки и пола
-    this.load.image('player', 'https://labs.phaser.io/assets/sprites/phaser3-logo.png');
-    this.load.image('hand', 'https://labs.phaser.io/assets/sprites/hand.png');
-    this.load.image('floor', 'https://labs.phaser.io/assets/skies/gradient16.png'); // Пол (фон)
+    // Загружаем изображения
+    this.load.image('floor', 'https://labs.phaser.io/assets/skies/gradient16.png');
+    this.load.image('particle', 'https://labs.phaser.io/assets/particles/green.png'); // Частица
+    this.load.image('enemy', 'https://labs.phaser.io/assets/sprites/baddie.png'); // Спрайт врага
+    this.load.image('sword', 'https://labs.phaser.io/assets/sprites/sword.png'); // Меч
 }
 
 function create() {
-    // Создаем пол (сцену)
-    floor = this.add.tileSprite(0, 0, 2000, 2000, 'floor'); // Увеличиваем размер пола
-    floor.setOrigin(0.5, 0.5); // Центрируем пол по его координатам
+    // Создаем пол
+    floor = this.add.tileSprite(0, 0, 2000, 2000, 'floor');
+    floor.setOrigin(0.5, 0.5);
 
-    // Включаем расширенную границу для камеры (размер сцены больше экрана)
     this.cameras.main.setBounds(0, 0, 2000, 2000);
 
-    // Создаем игрока (тело персонажа)
+    // Создаем игрока
     player = this.physics.add.image(400, 300, 'player').setDisplaySize(50, 50);
-    player.setCollideWorldBounds(false); // Убираем ограничение по стенам
+    player.visible = false; // Прячем игрока
 
     // Создаем руку
     hand = this.physics.add.image(400, 300, 'hand').setDisplaySize(20, 20);
-    hand.setCollideWorldBounds(false); // Убираем ограничение по стенам
+    hand.setCollideWorldBounds(false);
 
-    // Настраиваем камеру, чтобы она следила за игроком
+    // Создаем меч
+    sword = new Sword(this, player, hand); // Передаем ссылку на игрока и руку в меч
+
+    // Создаем врага
+    enemy = new Enemy(this, 600, 400); // Передаем координаты для создания врага
+
+    // Создаем эмиттер частиц для эффекта слизи
+    particles = this.add.particles(0, 0, 'particle', {
+        lifespan: 300,
+        speed: { min: 50, max: 60 },
+        scale: { start: 1, end: 0.7 },
+        blendMode: 'ADD',
+        alpha: { start: 0.5, end: 0 }, // Прозрачность: частицы постепенно исчезают
+        follow: player, // Частицы следуют за игроком
+        quantity: 1
+    });
+
+    particles.startFollow(player);
     this.cameras.main.startFollow(player);
 
-    // Событие нажатия ЛКМ
+    // Обработка нажатий ЛКМ
     this.input.on('pointerdown', (pointer) => {
-        if (!isDragging && pointer.leftButtonDown()) {
-            // Запоминаем позицию клика, чтобы не обновлять её при удержании
-            mousePosClick = { x: pointer.worldX, y: pointer.worldY };
-            isDragging = true; // Фиксируем руку, когда ЛКМ нажата
+        if (!isDragging && pointer.leftButtonDown()) {  
+            isDragging = true;
         }
     });
 
-    // Событие отпускания ЛКМ
-    this.input.on('pointerup', (pointer) => {
-        if (isDragging) {
-            isDragging = false; // Отключаем фиксирование руки при отпускании ЛКМ
-        }
+    this.input.on('gameout', () => {
+        isDragging = false;
+    });
+
+    this.input.on('pointerup', () => {
+        isDragging = false;
     });
 }
 
 function update() {
-    // Получаем текущее положение курсора
     const pointer = this.input.activePointer;
-
-    // Вычисляем расстояние от игрока до руки
     const distance = Phaser.Math.Distance.Between(player.x, player.y, hand.x, hand.y);
+    const distanceHandMouse = Phaser.Math.Distance.Between(player.x, player.y, pointer.worldX, pointer.worldY);
 
-    // Если ЛКМ нажата, персонаж подтягивается к месту клика (рука фиксируется)
-    if (isDragging && mousePosClick) {
-        // Движение персонажа с использованием скорости курсора
-        player.setVelocity(-pointer.velocity.x * 10, -pointer.velocity.y * 10); // Используем скорость указателя
+    // Обновляем состояние врага — он будет двигаться к игроку
+    enemy.update(player);
 
-        if (distance > maxHandDistance) {                    
-            // Если игрок выходит за пределы допустимого расстояния, ограничиваем его движение
+    // Обновляем состояние меча
+    sword.update();
+
+    // Проверка резкого движения мыши вверх и вниз
+
+    // Перемещение игрока с помощью "руки"
+    if (isDragging) {
+        player.setVelocity(-pointer.velocity.x * 10, -pointer.velocity.y * 10);
+        
+        if (distance > maxHandDistance) {
             const angle = Phaser.Math.Angle.Between(hand.x, hand.y, player.x, player.y);
-
-            // Ограничиваем перемещение тела в пределах максимального расстояния
             player.x = hand.x + Math.cos(angle) * maxHandDistance;
             player.y = hand.y + Math.sin(angle) * maxHandDistance;
         }
     } else {
-        // Если ЛКМ не зажата, рука должна стремиться к курсору с ограничением по расстоянию
-        if (distance < maxHandDistance) {
-            // Если рука в пределах допустимого расстояния, двигаем её к курсору
-            hand.x += (pointer.worldX - hand.x) * 0.1; // Плавное движение руки
+        // Рука плавно двигается к курсору
+        if (distanceHandMouse < maxHandDistance) {
+            hand.x += (pointer.worldX - hand.x) * 0.1;
             hand.y += (pointer.worldY - hand.y) * 0.1;
-        } else {
-            // Если рука выходит за пределы допустимого расстояния, останавливаем её
+        }
+        if (distanceHandMouse >= maxHandDistance) {
             const angle = Phaser.Math.Angle.Between(player.x, player.y, pointer.worldX, pointer.worldY);
-
-            // Ограничиваем перемещение руки границей максимального расстояния
-            hand.x = player.x + Math.cos(angle) * maxHandDistance;
-            hand.y = player.y + Math.sin(angle) * maxHandDistance;
+            hand.x = player.x + Math.cos(angle) * (maxHandDistance);
+            hand.y = player.y + Math.sin(angle) * (maxHandDistance);
         }
 
-        // Останавливаем движение тела, если ЛКМ не зажата
+
         player.setVelocity(0, 0);
     }
-
-    // Обновляем фон пола (чтобы пол двигался с игроком и заполнял экран)
 }
